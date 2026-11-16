@@ -27,6 +27,10 @@ pub enum IndexError {
     #[error("git command failed: {0}")]
     Git(String),
 
+    /// Composer CLI invocation failure.
+    #[error("composer command failed: {0}")]
+    Composer(String),
+
     /// Tree-sitter parser configuration error.
     #[error("tree-sitter setup failed: {0}")]
     Parser(String),

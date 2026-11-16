@@ -1,5 +1,6 @@
 //! Fast CLI indexer and query tool for `drupal/drupal` (`main`).
 
+mod composer;
 mod db;
 mod error;
 mod git;
@@ -8,13 +9,14 @@ mod model;
 mod php;
 mod yaml;
 
+use crate::composer::ToolsStatus;
 use crate::db::IndexDb;
 use crate::error::{IndexError, Result};
 use crate::git::{DEFAULT_BRANCH, DEFAULT_REPO_URL, head_sha, sync_repo};
 use crate::indexer::{default_data_dir, index_repository};
 use crate::model::{SymbolKind, SymbolRecord};
 use clap::{Parser, Subcommand};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 #[derive(Debug, Parser)]
@@ -100,6 +102,51 @@ enum Command {
     Stats,
 }
 
+/// Indexes `repo_dir` into `db_path` unless the database already holds its `HEAD` (or `force`).
+/// Returns `true` when it indexed.
+fn index_if_changed(
+    repo_dir: &Path,
+    db_path: &Path,
+    repo_url: &str,
+    force: bool,
+    json: bool,
+) -> Result<bool> {
+    let sha = head_sha(repo_dir)?;
+    let mut db = IndexDb::open(db_path)?;
+    let prev_sha = db.get_meta("commit_sha")?.unwrap_or_default();
+    if !force && prev_sha == sha {
+        if json {
+            println!(
+                "{}",
+                serde_json::json!({"status": "up_to_date", "commit_sha": sha})
+            );
+        } else {
+            println!("up to date at {sha}");
+        }
+        return Ok(false);
+    }
+    let indexed = index_repository(repo_dir, &mut db, &sha, repo_url)?;
+    if json {
+        println!(
+            "{}",
+            serde_json::json!({"status": "indexed", "commit_sha": sha, "records": indexed})
+        );
+    } else {
+        println!("indexed {indexed} records at {sha}");
+    }
+    Ok(true)
+}
+
+// stderr, so `--json` output on stdout stays one JSON document.
+fn report_dev_tools(status: &ToolsStatus) {
+    match status {
+        ToolsStatus::Installed => eprintln!("dev tools (phpcs, phpstan) installed into vendor/bin"),
+        ToolsStatus::ComposerMissing => {
+            eprintln!("warning: composer not found, skipped dev tools (phpcs, phpstan)");
+        }
+    }
+}
+
 fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
@@ -129,28 +176,9 @@ fn run() -> Result<()> {
             if !no_pull {
                 sync_repo(&repo_dir, &repo_url, &branch)?;
             }
-            let sha = head_sha(&repo_dir)?;
-            let mut db = IndexDb::open(&db_path)?;
-            let prev_sha = db.get_meta("commit_sha")?.unwrap_or_default();
-            if !force && prev_sha == sha {
-                if cli.json {
-                    println!(
-                        "{}",
-                        serde_json::json!({"status": "up_to_date", "commit_sha": sha})
-                    );
-                } else {
-                    println!("up to date at {sha}");
-                }
-                return Ok(());
-            }
-            let indexed = index_repository(&repo_dir, &mut db, &sha, &repo_url)?;
-            if cli.json {
-                println!(
-                    "{}",
-                    serde_json::json!({"status": "indexed", "commit_sha": sha, "records": indexed})
-                );
-            } else {
-                println!("indexed {indexed} records at {sha}");
+            let reindexed = index_if_changed(&repo_dir, &db_path, &repo_url, force, cli.json)?;
+            if reindexed || composer::tools_missing(&repo_dir) {
+                report_dev_tools(&composer::install_dev_tools(&repo_dir)?);
             }
         }
         Command::Search { query, kind, limit } => {

@@ -8,6 +8,10 @@ Fast local CLI indexer for [`drupal/drupal`](https://github.com/drupal/drupal) (
 - Extracts PHP classes, interfaces, traits, enums, methods, functions, `#[Hook('...')]` attributes, and `hook_*` definitions via `tree-sitter-php`.
 - Extracts Drupal YAML metadata: `*.services.yml`, `*.routing.yml`, `*.info.yml`, `*.permissions.yml`, `*.libraries.yml`, `*.schema.yml`.
 - Stores everything in `~/.local/share/drupal-index/index.sqlite` with FTS5 full-text search.
+- After a re-index (or when `vendor/bin/phpcs` is missing) runs `composer update --no-scripts` in the
+  mirror with `composer.lock` deleted: core's `require-dev` puts `phpcs` + `drupal/coder` and
+  `phpstan` + `phpstan-drupal` into `repo/vendor/bin` (the next sync's `git reset --hard` restores the
+  lock). Without `composer` on `PATH` it warns and skips.
 
 ## Install
 
